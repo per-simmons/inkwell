@@ -35,6 +35,7 @@ import SwiftData
         user = AuthClient.storedUser
         needsReauth = user != nil && !AuthClient.hasSession
         finishInterruptedAdoption()
+        if user == nil { recoverOrphanedAccounts() }
         open(user.map { .account($0.id) } ?? .device)
         // Signed in but nothing here (the app was reinstalled — the Keychain outlives it, the
         // store doesn't): bring the account's notes back down in the background.
@@ -191,6 +192,27 @@ import SwiftData
         }
         if (try? StoreMerger.adopt(from: .device, into: .account(uid), keepManifest: pending["keepManifest"] == "1")) != nil {
             UserDefaults.standard.removeObject(forKey: Self.adoptionKey)
+        }
+    }
+
+    /// Signed out, but a signed-out account's notes are still on this iPad (plain "Sign Out"
+    /// keeps them, hidden, under Accounts/<uid>/). That account can't always come back: the
+    /// Neon project behind it was deleted on 2026-10-02, and a new project gives the same
+    /// email a new user id, so the folder would never be opened again. Move those notes, with
+    /// their recordings, drawings, images and PDFs, into the signed-out notebook. Runs before
+    /// any store opens. Never touches the network.
+    private func recoverOrphanedAccounts() {
+        let fm = FileManager.default
+        let pending = Set(UserDefaults.standard.stringArray(forKey: Self.pendingKey) ?? [])
+        guard let uids = try? fm.contentsOfDirectory(atPath: StorageScope.accountsRoot.path) else { return }
+        var notes = 0
+        for uid in uids where !pending.contains(uid) {
+            let scope = StorageScope.account(uid)
+            guard fm.fileExists(atPath: scope.storeURL.path) else { continue }
+            if let r = try? StoreMerger.adopt(from: scope, into: .device, keepManifest: false) { notes += r.notes }
+        }
+        if notes > 0 {
+            alert = "Recovered \(notes) note\(notes == 1 ? "" : "s") from your earlier account onto this iPad."
         }
     }
 

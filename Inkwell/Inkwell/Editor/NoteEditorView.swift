@@ -13,6 +13,7 @@ struct NoteEditorView: View {
     @State private var moving = false
     @State private var goToPageText = ""
     @State private var sharePDF: URL?
+    @State private var shareAudio: [URL]?
     @State private var photoItem: PhotosPickerItem?
 
     private var recorder: AudioRecorder { .shared }
@@ -92,6 +93,9 @@ struct NoteEditorView: View {
         }
         .sheet(item: $sharePDF) { url in
             ShareSheet(items: [url])
+        }
+        .sheet(isPresented: Binding(get: { shareAudio != nil }, set: { if !$0 { shareAudio = nil } })) {
+            ShareSheet(items: shareAudio ?? [])
         }
         .alert("Go to Page", isPresented: $editor.showGoToPage) {
             TextField("Page", text: $goToPageText).keyboardType(.numberPad)
@@ -175,6 +179,8 @@ struct NoteEditorView: View {
     private var noteMenu: some View {
         Menu {
             Button { exportPDF() } label: { Label("Share PDF", systemImage: "square.and.arrow.up") }
+            Button { exportAudio() } label: { Label("Share Audio", systemImage: "waveform") }
+                .disabled(!editor.note.recordings.contains { $0.duration > 0 })
             Button { editor.showPaperSheet = true } label: { Label("Paper…", systemImage: "doc.richtext") }
             Menu {
                 ForEach(ViewMode.allCases) { mode in
@@ -196,6 +202,24 @@ struct NoteEditorView: View {
                 .contentShape(Rectangle())
         }
         .accessibilityLabel("Note options")
+    }
+
+    /// Every recording in the note as .m4a, named "<note> - <recording>.m4a" (copies in tmp).
+    private func exportAudio() {
+        let fm = FileManager.default
+        let note = editor.note
+        let name = HandoffController.safeName(note.title)
+        let dir = fm.temporaryDirectory.appendingPathComponent("Audio", isDirectory: true)
+            .appendingPathComponent(name, isDirectory: true)
+        try? fm.removeItem(at: dir)
+        try? fm.createDirectory(at: dir, withIntermediateDirectories: true)
+        var urls: [URL] = []
+        for rec in note.orderedRecordings where rec.duration > 0 {
+            let src = NoteFiles.audioURL(noteID: note.id, recordingID: rec.id)
+            let dst = dir.appendingPathComponent("\(name) - \(HandoffController.safeName(rec.name)).m4a")
+            if (try? fm.copyItem(at: src, to: dst)) != nil { urls.append(dst) }
+        }
+        if !urls.isEmpty { shareAudio = urls }
     }
 
     private func exportPDF() {
